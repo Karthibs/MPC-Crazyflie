@@ -1,7 +1,7 @@
 import numpy as np
 import scipy.linalg as la
 
-from drone_params import STATE_ORDER_12, output_matrix
+from MPC.drone_params import STATE_ORDER_12, output_matrix
 
 class BatchMPC:
     """

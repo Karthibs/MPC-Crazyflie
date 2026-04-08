@@ -1,211 +1,90 @@
-```markdown
-# MPC Flight Engines V1
+# MPC-Crazyflie
 
-Model Predictive Control (MPC) framework for flight engine/vehicle control simulations, optimization, and evaluation.
+Model Predictive Control (MPC) simulations for a Crazyflie-like quadrotor in MuJoCo.
 
-## Overview
-
-This repository contains:
-- MPC controller implementation
-- System/engine dynamics models
-- Simulation scripts
-- Tuning/configuration files
-- Visualization and analysis utilities
-
-> Update this README section after mapping exact files/modules.
-
----
-
-## Repository Structure
-
-> Replace this with your actual folder tree.
+## Repository structure
 
 ```text
 .
-├── README.md
-├── src/
-│   ├── mpc/
-│   │   ├── controller.py
-│   │   ├── cost.py
-│   │   ├── constraints.py
-│   │   └── solver.py
-│   ├── models/
-│   │   ├── engine_dynamics.py
-│   │   └── state_space.py
-│   ├── utils/
-│   │   ├── logger.py
-│   │   └── plotting.py
-│   └── config/
-│       ├── default.yaml
-│       └── tuning.yaml
-├── scripts/
-│   ├── run_simulation.py
-│   ├── tune_mpc.py
-│   └── evaluate.py
-├── tests/
-│   ├── test_controller.py
-│   └── test_models.py
-├── data/
-│   ├── inputs/
-│   └── outputs/
-└── requirements.txt
+├── CstMPC_simple.py
+├── CstMPC_Reftrack.py
+├── CstMPC_Kalman_Reftrack.py
+├── UnCst_Batch_droneRefTrack.py
+├── UnCst_Dy_KalmanRefTrack.py
+├── MPC/
+│   ├── ConstrainedBatchMPC.py
+│   ├── BatchMpc.py
+│   ├── DyPMPC.py
+│   ├── drone_environment.py
+│   ├── drone_params.py
+│   └── chaos_wind_generator.py
+├── Drone_xml/
+│   ├── scene.xml
+│   ├── drone.xml
+│   └── assets/
+└── images/
 ```
 
----
+## What is included
 
-## Features
+- Constrained batch MPC for quadrotor stabilization and reference tracking
+- Offset-free constrained MPC with Kalman disturbance estimation
+- Unconstrained batch/dynamic-programming MPC variants
+- MuJoCo-based simulation environment and drone model linearization utilities
 
-- Receding-horizon MPC controller
-- Constraint handling (state/input bounds)
-- Configurable prediction/control horizons
-- Pluggable optimizer/solver backend
-- Simulation and result plotting
-- Modular architecture for new plant models
+## Requirements
 
----
+Python 3.9+ and these packages:
 
-## Installation
+- `numpy`
+- `scipy`
+- `matplotlib`
+- `mujoco`
+- `qpsolvers`
+- a QP backend for `qpsolvers` (for example `osqp`)
+
+Install:
 
 ```bash
-# Create and activate virtual environment
 python -m venv .venv
-source .venv/bin/activate   # macOS/Linux
-# .venv\Scripts\activate    # Windows
-
-# Install dependencies
-pip install -r requirements.txt
+source .venv/bin/activate  # Linux/macOS
+# .venv\Scripts\activate   # Windows
+pip install numpy scipy matplotlib mujoco qpsolvers osqp
 ```
 
----
+## Setup note
 
-## Quick Start
+Some modules in `MPC/` use legacy absolute imports (for example `from drone_params import ...`).
+Before running scripts, set:
 
 ```bash
-# Run default simulation
-python scripts/run_simulation.py
-
-# Tune MPC parameters
-python scripts/tune_mpc.py --config src/config/tuning.yaml
-
-# Evaluate saved run
-python scripts/evaluate.py --run-id <run_id>
+export PYTHONPATH="$PWD/MPC:$PYTHONPATH"
 ```
 
----
+## Running examples
 
-## MPC Module (Detailed)
-
-### Core Components
-
-- **Controller**: Builds and solves the optimization problem each timestep.
-- **Cost Function**: Penalizes tracking error, control effort, and rate changes.
-- **Constraints**: Enforces physical/operational bounds.
-- **Model**: Predictive dynamics used by optimizer.
-
-### Typical MPC Formulation
-
-Minimize over control sequence:
-
-\[
-J = \sum_{k=0}^{N-1}
-\left\|x_k - x_k^{ref}\right\|_Q^2 +
-\left\|u_k - u_k^{ref}\right\|_R^2 +
-\left\|\Delta u_k\right\|_S^2
-\]
-
-Subject to:
-
-- \(x_{k+1} = f(x_k, u_k)\)
-- \(x_{min} \le x_k \le x_{max}\)
-- \(u_{min} \le u_k \le u_{max}\)
-
-### Tuning Guidance
-
-- Increase **Q** for tighter state tracking.
-- Increase **R** for smoother/smaller control actions.
-- Increase **S** to reduce actuator aggressiveness.
-- Increase horizon **N** for foresight (higher compute cost).
-
----
-
-## Configuration
-
-Use YAML/JSON config files for:
-- Model parameters
-- Horizon length
-- Cost weights
-- Constraint limits
-- Solver settings
-
-Example:
-
-```yaml
-mpc:
-    horizon: 20
-    dt: 0.05
-    weights:
-        Q: [10, 10, 1]
-        R: [0.1]
-        S: [1.0]
-    constraints:
-        u_min: -1.0
-        u_max: 1.0
-```
-
----
-
-## Testing
+From repository root:
 
 ```bash
-pytest -q
+python CstMPC_simple.py
+python CstMPC_Reftrack.py
+python CstMPC_Kalman_Reftrack.py
+python UnCst_Batch_droneRefTrack.py
+python UnCst_Dy_KalmanRefTrack.py
 ```
-
----
 
 ## Outputs
 
-Simulation outputs are typically stored in:
-- `data/outputs/` for logs/results
-- figures under `plots/` or run-specific directories
+Simulation plots are saved to `images/`, for example:
 
-Include:
-- tracking error metrics
-- control input history
-- constraint violation checks
+- `drone_constrained_mpc_reference_tracking_wic.png`
+- `drone_constrained_mpc_inputs_wic.png`
+- `drone_constrained_kalman_mpc_tracking.png`
+- `drone_constrained_kalman_mpc_inputs.png`
+- `UnCst_KalmanRefTrack_Dy.png`
 
----
+## Notes
 
-## Roadmap
-
-- [ ] Nonlinear MPC support
-- [ ] Real-time benchmarking
-- [ ] Hardware-in-the-loop integration
-- [ ] Multi-objective tuning utilities
-
----
-
-## Contributing
-
-1. Create feature branch
-2. Add/update tests
-3. Run lint + tests
-4. Open pull request with summary
-
----
-
-## License
-
-Add your license here (e.g., MIT, Apache-2.0).
-
----
-
-## Maintainer
-
-Project owner: `@your-handle`
-```
-
-If you share this command output, a fully accurate README can be generated from your real files:
-
-```bash
-tree -a -L 4
-```
+- The MuJoCo scene path used by the environment is `Drone_xml/scene.xml`.
+- The constrained MPC scripts rely on QP solving through `qpsolvers.solve_qp`.
+- `python -m pytest -q` is currently not available in this repository because `pytest` is not installed/configured here.

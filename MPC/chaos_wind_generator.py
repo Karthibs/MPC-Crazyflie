@@ -6,8 +6,6 @@ class ChaosWindGenerator:
 
     - Wind is applied via `model.opt.wind[:3]`.
     - Torques are applied via `data.xfrc_applied[body_id, 3:6]`.
-
-    Set intensities to 0 to disable either effect.
     """
 
     def __init__(

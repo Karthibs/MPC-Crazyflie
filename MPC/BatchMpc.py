@@ -5,18 +5,17 @@ from MPC.drone_params import STATE_ORDER_12, output_matrix
 
 class BatchMPC:
     """
-    Batch Model Predictive Control for Linear Time-Invariant (LTI) Systems.
-    This implementation pre-calculates the gain matrix K offline to 
-    ensure real-time performance (Step 5 is just a matrix multiplication).
+    Batch Model Predictive Control Unconstrained.
+    This implementation pre-calculates the gain matrix K offline.
     """
     def __init__(self, A, B, N, Q_diag, R_diag):
         n = A.shape[0]  # Number of states
         m = B.shape[1]  # Number of inputs        
         Q = np.diag(Q_diag)
         R = np.diag(R_diag)
-        Pf = Q  # Terminal cost (could be solved via Riccati for better stability)
+        Pf = Q  # Terminal cost (could be solved via Riccati equation)
 
-        # --- Step 1: Construct Prediction Matrices (Omega and Gamma) ---
+        # --- Construct Prediction Matrices (Omega and Gamma) ---
         # Omega maps the current state to future states: X_future = Omega * x0
         # Omega = np.zeros((n * N, n))
         Omega = np.vstack([np.linalg.matrix_power(A, i) for i in range(1, N + 1)])
@@ -28,28 +27,21 @@ class BatchMPC:
                 if i >= j:
                     Gamma[i*n:(i+1)*n, j*m:(j+1)*m] = np.linalg.matrix_power(A, i-j) @ B
             
-        # for i in range(1, N + 1):
-        #     Omega[(i-1)*n : i*n, :] = np.linalg.matrix_power(A, i)
-        #     for j in range(1, i + 1):
-        #         Gamma[(i-1)*n : i*n, (j-1)*m : j*m] = np.linalg.matrix_power(A, i-j) @ B
         
-        # --- Step 2: Construct Augmented Weight Matrices ---
+        # --- Construct Augmented Weight Matrices ---
         Q_list = [Q] * (N - 1) + [Pf]
-        # Q_bar = la.block_diag(*([Q] * (N-1)), Pf)
         Q_bar = la.block_diag(*Q_list)
         R_bar = la.block_diag(*([R] * N))
         
-        # --- Step 3: Compute the Offline Batch Gain ---
+        # --- Compute the Offline Batch Gain ---
         # Solving the Quadratic Programming (QP) problem analytically:
         # min J = X^T Q X + U^T R U  s.t. X = Omega*x0 + Gamma*U
         H = Gamma.T @ Q_bar @ Gamma + R_bar
         M = Gamma.T @ Q_bar @ Omega
         
-        # K_full calculates the entire input sequence for the horizon N
-        # K_full = -np.linalg.solve(H, M)
-        K_full = -np.linalg.inv(H) @ M  # More numerically stable than solve for large matrices
+        K_full = -np.linalg.inv(H) @ M 
         
-        # --- Step 4: Extract the Receding Horizon Gain ---
+        # --- Extract the Receding Horizon Gain ---
         # We only apply the first control action in the sequence
         self.K_batch = K_full[0:m, :]
         print(f"Batch MPC Gain K:\n{self.K_batch.round(4)}")
@@ -114,12 +106,6 @@ class BatchMPCReferencetracking:
     def reset(self) -> None:
         self.z_int[:] = 0.0
 
-    # def set_x_ref(self, x_ref: np.ndarray) -> None:
-    #     x_ref = np.asarray(x_ref, dtype=float).ravel()
-    #     if x_ref.size != self.n_x:
-    #         raise ValueError(f"x_ref must have length {self.n_x}, got {x_ref.size}")
-    #     self.x_ref = x_ref.copy()
-
     def set_position_ref(self, ref_states: np.ndarray, states: np.ndarray) -> None:
         """Convenience setter when state order is the default 12-state."""
         ref_states = np.asarray(ref_states, dtype=float).ravel()
@@ -142,10 +128,7 @@ class BatchMPCReferencetracking:
 
 
 class BatchMPCKalmanReferenceTracking:
-    """Offset-free Batch MPC with disturbance estimation and reference tracking.
-
-    Implements the algorithm in your screenshot ("Offset-Free MPC with Disturbance
-    Rejection and Reference Tracking") for a discrete-time plant:
+    """Batch MPC with disturbance estimation and reference tracking.
 
         x_{k+1} = A x_k + B u_k + B_d d_k
         d_{k+1} = d_k
@@ -156,10 +139,6 @@ class BatchMPCKalmanReferenceTracking:
       2) Steady-state target generator -> (x_s, u_s)
       3) Control law: u = u_s + K (x_hat - x_s)
       4) Kalman prediction -> x_aug_pred for next step
-
-    Notes:
-      - This is an unconstrained MPC feedback (BatchMPC gain K).
-      - Choose H (tracked outputs) and reference r accordingly.
     """
 
     def __init__(
@@ -190,7 +169,6 @@ class BatchMPCKalmanReferenceTracking:
         if self.B.shape[0] != self.n_x:
             raise ValueError("B must have same number of rows as A")
 
-        # Measurement model y = C_y x
         if C_y is None:
             self.C_y = np.eye(self.n_x)
         else:
@@ -222,11 +200,11 @@ class BatchMPCKalmanReferenceTracking:
         self.n_r = int(self.H.shape[0])
         print(f"n_r: {self.n_r}")
 
-        # 1) Controller gain K (unconstrained Batch MPC feedback)
+        #Controller gain K (unconstrained Batch MPC feedback)
         self._controller = BatchMPC(self.A, self.B, int(horizon), np.asarray(Qx, dtype=float).ravel(), np.asarray(Ru, dtype=float).ravel())
         self.K = self._controller.K_batch
 
-        # 2) Estimator gain L via steady-state Kalman filter on augmented system
+        # Estimator gain L via steady-state Kalman filter on augmented system
         # x_aug = [x; d]
         # x_aug+ = A_aug x_aug + B_aug u
         self.A_aug = np.block(
@@ -254,10 +232,7 @@ class BatchMPCKalmanReferenceTracking:
         S = self.C_aug @ P @ self.C_aug.T + self.Rv
         self.L = P @ self.C_aug.T @ np.linalg.inv(S)
 
-        # 3) Target generator: solve steady-state equations for (x_s, u_s)
-        # [A-I, B; H, 0] [x_s; u_s] = [-B_d d_hat; r]
-        # This matrix is square only when n_r == n_u. If not square, we use
-        # a minimum-norm least-squares solution via pseudoinverse.
+        # solve steady-state equations for (x_s, u_s)
         self._S_ss = np.block(
             [
                 [self.A - np.eye(self.n_x), self.B],
@@ -273,7 +248,6 @@ class BatchMPCKalmanReferenceTracking:
         else:
             self._S_ss_solver = np.linalg.pinv(self._S_ss)
 
-        # Online state
         self.x_aug_hat = np.zeros(self.n_x + self.n_d)
         self.x_aug_pred = np.zeros(self.n_x + self.n_d)
         self.r = np.zeros(self.n_r)
@@ -309,18 +283,11 @@ class BatchMPCKalmanReferenceTracking:
         return x_s, u_s
 
     def step(self, y_meas: np.ndarray) -> np.ndarray:
-        """Run one offset-free MPC step.
-
-        Args:
-            y_meas: measured output (n_y,). If you measure full state, pass x.
-        Returns:
-            u: control action (n_u,)
-        """
         y_meas = np.asarray(y_meas, dtype=float).ravel()
         if y_meas.size != self.n_y:
             raise ValueError(f"y_meas must have length {self.n_y}")
 
-        # 1) Kalman correction
+        # Kalman correction
         # print(f"y_meas: {y_meas.shape}, x_aug_pred: {self.x_aug_pred.shape}, C_aug: {self.C_aug.shape}")
         innovation = y_meas - (self.C_aug @ self.x_aug_pred)
         self.x_aug_hat = self.x_aug_pred + self.L @ innovation
@@ -328,17 +295,12 @@ class BatchMPCKalmanReferenceTracking:
         x_hat = self.x_aug_hat[: self.n_x]
         d_hat = self.x_aug_hat[self.n_x :]
 
-        # 2) Targets
+        # Targets
         x_s, u_s = self.steady_state_targets(d_hat)
 
-        # 3) Control law
+        # Control law
         u = u_s + (self.K @ (x_hat - x_s))
 
-        # 4) Prediction
+        # Prediction
         self.x_aug_pred = self.A_aug @ self.x_aug_hat + self.B_aug @ u
         return u
-
-
-
-    # Backwards-compatible alias
-    # BatchMPCReferenceTracking = BatchMPCOffsetFreeReferenceTracking

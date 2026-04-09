@@ -16,7 +16,7 @@ def build_condensed_state_box_constraints(
     terminal_only: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Build condensed box constraints on selected predicted states.
+    Build condensed constraints on selected predicted states.
 
     Returns matrices (A_ineq, E_x0, b0) such that the QP constraints are
 
@@ -32,39 +32,8 @@ def build_condensed_state_box_constraints(
         lower <= Y <= upper
 
     are converted into affine inequalities in U.
-
-    Parameters
-    ----------
-    Omega : (n*N, n) ndarray
-        Stacked state prediction matrix.
-    Gamma : (n*N, m*N) ndarray
-        Stacked input prediction matrix.
-    horizon : int
-        Prediction horizon N.
-    states : sequence of str
-        Names of states to constrain, e.g. ("z", "roll", "pitch").
-    lower, upper :
-        Bounds for the selected states.
-        Allowed shapes:
-          - scalar: same bound for all selected states at all steps
-          - length p: one bound per selected state, repeated over horizon
-          - length p*N: one bound per selected state per prediction step
-        where p = len(states)
-    state_order : tuple[str, ...]
-        State name ordering, defaults to STATE_ORDER_12.
-    terminal_only : bool
-        If True, constrain only the terminal predicted state x_{k+N}.
-        If False, constrain all predicted states x_{k+1},...,x_{k+N}.
-
-    Returns
-    -------
-    A_ineq : ndarray
-    E_x0   : ndarray
-    b0     : ndarray
-
-    Notes
-    -----
-    At runtime, given current state x0, compute:
+   
+    given current state x0, compute:
         b_ineq = b0 + E_x0 @ x0
 
     and solve:
@@ -98,7 +67,6 @@ def build_condensed_state_box_constraints(
         Cbar[:, (horizon - 1) * n_state : horizon * n_state] = Csel
         dim_y = p
     else:
-        # Select the chosen states at every prediction step
         Cbar = np.kron(np.eye(horizon), Csel)
         dim_y = p * horizon
 
@@ -481,20 +449,12 @@ class ConstrainedBatchMPCReferenceTracking:
 
 class ConstrainedBatchMPCKalmanReferenceTracking:
     """
-    Constrained offset-free batch MPC with disturbance estimation and reference tracking.
+    Constrained batch MPC with disturbance estimation and reference tracking.
 
     Plant:
         x_{k+1} = A x_k + B u_k + B_d d_k
         d_{k+1} = d_k
         y_k     = C_y x_k
-
-    At each step:
-      1) Kalman correction -> estimates x_hat, d_hat
-      2) Steady-state target generator -> (x_s, u_s)
-      3) Constrained MPC on deviation variables:
-             x_tilde = x_hat - x_s
-             u_tilde = u - u_s
-      4) Kalman prediction -> x_aug_pred for next step
     """
 
     def __init__(

@@ -77,9 +77,6 @@ def output_matrix(
 
     Example:
         C_pos = output_matrix(["x", "y", "z"])  # 3x12
-
-    Raises:
-        KeyError if an output name is not in state_order.
     """
     name_to_index = {name: i for i, name in enumerate(state_order)}
     indices = [name_to_index[name] for name in outputs]
@@ -127,9 +124,6 @@ def make_hover_12state_continuous_model(params: DroneParams, dt: float) -> Drone
     C = np.eye(12)
     D = np.zeros((12, 4))
 
-    # Note: Since your A and B are continuous, we should ideally discretize them 
-    # using Ad = I + A*dt for MPC, but for a simple test:
-    # 3. Discretization (Euler Method for simplicity)
 
     dt = dt
     n_states = A.shape[0]
@@ -139,12 +133,10 @@ def make_hover_12state_continuous_model(params: DroneParams, dt: float) -> Drone
     M[:n_states, :n_states] = A
     M[:n_states, n_states:] = B
 
-    # 2. Compute the matrix exponential
     # exp(M * dt) = [[Ad, Bd],
     #                [0,   I ]]
     Md = expm(M * dt)
 
-    # 3. Extract the discretized matrices
     Ad = Md[:n_states, :n_states]
     Bd = Md[:n_states, n_states:]
     return DroneLinearModel(A=Ad, B=Bd, C=C, D=D)

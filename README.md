@@ -5,6 +5,13 @@ The project implements multiple MPC variants, ranging from **unconstrained batch
 
 The controller linearizes the quadrotor dynamics around hover, discretizes the continuous-time model using **zero-order hold** via the matrix exponential, and solves a **receding-horizon optimal control problem** at each timestep.
 
+**Simulation of drone Following a square pth using Dynaminc Programming and Kalman Filter counter the noise introduced**
+
+<p align="center">
+  <img src="images/DySim.gif" alt="Plot 2" width="45%">
+  <img src="images/UnCst_KalmanRefTrack_Dy.png" alt="Plot 1" width="45%">
+</p>
+
 ---
 
 ## Repository Structure
@@ -134,13 +141,6 @@ Although it is equivalent to the unconstrained batch formulation, it demonstrate
 The repository also includes a Kalman-based offset-free version:
 
 - `DyPMPCKalmanReferenceTracking`
-
-Simulation of Drone folwwing a Square Path
-
-<p align="center">
-  <img src="images/DySim.gif" alt="Plot 2" width="45%">
-  <img src="images/UnCst_KalmanRefTrack_Dy.png" alt="Plot 1" width="45%">
-</p>
 ---
 
 ### 4. Constrained Batch MPC (`ConstrainedBatchMPC.py`)

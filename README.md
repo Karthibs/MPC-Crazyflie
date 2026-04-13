@@ -1,211 +1,208 @@
-```markdown
-# MPC Flight Engines V1
+# MPC Drone Flight Controller
 
-Model Predictive Control (MPC) framework for flight engine/vehicle control simulations, optimization, and evaluation.
+A Model Predictive Control (MPC) framework for quadrotor flight simulation, built on top of MuJoCo. The project implements multiple MPC variants — from unconstrained batch MPC to constrained offset-free MPC with Kalman disturbance estimation — all applied to a 12-state linearized hover model of a Crazyflie-style quadrotor.
+
+---
 
 ## Overview
 
-This repository contains:
-- MPC controller implementation
-- System/engine dynamics models
-- Simulation scripts
-- Tuning/configuration files
-- Visualization and analysis utilities
-
-> Update this README section after mapping exact files/modules.
+The controller linearizes the quadrotor dynamics around hover, discretizes using zero-order hold (matrix exponential), and solves a receding-horizon optimal control problem at each timestep. Several progressively more capable controller architectures are implemented and compared.
 
 ---
 
 ## Repository Structure
 
-> Replace this with your actual folder tree.
-
 ```text
 .
-├── README.md
-├── src/
-│   ├── mpc/
-│   │   ├── controller.py
-│   │   ├── cost.py
-│   │   ├── constraints.py
-│   │   └── solver.py
-│   ├── models/
-│   │   ├── engine_dynamics.py
-│   │   └── state_space.py
-│   ├── utils/
-│   │   ├── logger.py
-│   │   └── plotting.py
-│   └── config/
-│       ├── default.yaml
-│       └── tuning.yaml
-├── scripts/
-│   ├── run_simulation.py
-│   ├── tune_mpc.py
-│   └── evaluate.py
-├── tests/
-│   ├── test_controller.py
-│   └── test_models.py
-├── data/
-│   ├── inputs/
-│   └── outputs/
-└── requirements.txt
+├── MPC/
+│   ├── BatchMpc.py                  # Unconstrained batch MPC + Kalman variant
+│   ├── ConstrainedBatchMPC.py       # Constrained batch MPC (QP-based) + Kalman variant
+│   ├── DyPMPC.py                    # Dynamic Programming MPC + Kalman variant
+│   ├── drone_environment.py         # MuJoCo quadrotor environment wrapper
+│   ├── drone_params.py              # Physical params, linearization, state-space helpers
+│   └── chaos_wind_generator.py      # Randomized wind/torque disturbance injection
+├── Drone_xml/
+│   ├── drone.xml                    # Crazyflie quadrotor MuJoCo model
+│   └── scene.xml                    # Scene with ground plane and lighting
+├── CstMPC_simple.py                 # Constrained batch MPC (no tracking, manual augmentation)
+├── CstMPC_Reftrack.py               # Constrained batch MPC with integral reference tracking
+├── CstMPC_Kalman_Reftrack.py        # Constrained offset-free MPC with Kalman filter
+├── UnCst_Batch_droneRefTrack.py     # Unconstrained batch MPC with reference tracking
+├── UnCst_Dy_KalmanRefTrack.py       # Unconstrained DP MPC with Kalman filter
+└── images/                          # Saved simulation plots
 ```
 
 ---
 
-## Features
+## Drone Model
 
-- Receding-horizon MPC controller
-- Constraint handling (state/input bounds)
-- Configurable prediction/control horizons
-- Pluggable optimizer/solver backend
-- Simulation and result plotting
-- Modular architecture for new plant models
+The simulated drone is a Crazyflie 2.x quadrotor modelled in MuJoCo with:
+
+- **Mass:** 27 g
+- **Inertia:** Ixx = Iyy = 2.3951×10⁻⁵ kg·m², Izz = 3.2347×10⁻⁵ kg·m²
+- **Actuators:** body thrust (N), roll torque (Nm), pitch torque (Nm), yaw torque (Nm)
+- **Sensors:** gyroscope, accelerometer, frame quaternion
+
+The **12-state** linearized model (hover operating point) has the state vector:
+
+```
+x = [x, y, z, vx, vy, vz, roll, pitch, yaw, p, q, r]
+```
+
+and control input:
+
+```
+u = [ΔThrust, τ_roll, τ_pitch, τ_yaw]
+```
+
+The continuous-time A and B matrices are discretized exactly via the matrix exponential.
+
+---
+
+## Controller Architectures
+
+### 1. Unconstrained Batch MPC (`BatchMpc.py`)
+Pre-computes the full receding-horizon gain matrix **K** offline by solving the unconstrained QP analytically:
+
+```
+min  X^T Q̄ X + U^T R̄ U    s.t.   X = Ω x₀ + Γ U
+```
+
+The closed-form solution `K = -(Γᵀ Q̄ Γ + R̄)⁻¹ Γᵀ Q̄ Ω` is computed once at initialization.
+
+### 2. Batch MPC with Integral Reference Tracking (`BatchMpc.py` — `BatchMPCReferencetracking`)
+Augments the state with output-error integrators to achieve zero steady-state error:
+
+```
+z_{k+1} = z_k + dt · C_track · x̃_k
+x_aug   = [x̃; z]
+```
+
+Tracks selectable outputs (e.g. `z`, `roll`, `pitch`, `yaw`) by penalizing both tracking error and integral windup.
+
+### 3. Dynamic Programming MPC (`DyPMPC.py`)
+Solves the finite-horizon LQR backward Riccati recursion online. Equivalent gain to Batch MPC but demonstrates the DP formulation. Also includes a Kalman + offset-free variant (`DyPMPCKalmanReferenceTracking`).
+
+### 4. Constrained Batch MPC (`ConstrainedBatchMPC.py`)
+Solves the QP **online** at each timestep using [qpsolvers](https://github.com/qpsolvers/qpsolvers) (OSQP backend), enabling hard state and input constraints:
+
+```
+min  ½ Uᵀ P U + qᵀ U
+s.t. A_ineq U ≤ b₀ + E x₀
+```
+
+Constraint matrices for state and input box constraints are assembled via condensed prediction:
+
+```
+Y = C̄(Ω x₀ + Γ U)   →   A_ineq U ≤ b + E x₀
+```
+
+### 5. Constrained MPC with Integral Reference Tracking (`ConstrainedBatchMPC.py` — `ConstrainedBatchMPCReferenceTracking`)
+Combines the QP-based constrained MPC with the integral-augmented error-state formulation. Physical state bounds are automatically shifted to error-state bounds relative to the current reference `x_ref`.
+
+### 6. Constrained Offset-Free MPC with Kalman Filter (`ConstrainedBatchMPC.py` — `ConstrainedBatchMPCKalmanReferenceTracking`)
+The most complete controller. Adds a **steady-state Kalman filter** for disturbance estimation to achieve offset-free tracking under persistent unmeasured disturbances:
+
+```
+x_{k+1} = A x_k + B u_k + B_d d_k
+d_{k+1} = d_k                          (constant disturbance model)
+y_k     = C_y x_k + v_k
+```
+
+At each step:
+1. **Kalman correction** — update `[x̂; d̂]` from measurement `y_k`
+2. **Steady-state target** — solve `[A-I, B; H, 0] [xₛ; uₛ] = [-B_d d̂; r]`
+3. **Constrained QP** — solve for `ũ = u - uₛ` on deviation dynamics `x̃ = x - xₛ`
+4. **Apply** `u = uₛ + ũ`, then Kalman prediction step
+
+---
+
+## State & Input Constraints
+
+Constraints are built as condensed prediction-form inequalities and stacked before each QP solve:
+
+| Constraint | Typical Values |
+|---|---|
+| Altitude `z` | 0.10 m – 0.45 m |
+| Roll angle | ±20° |
+| Pitch angle | ±20° |
+| Thrust deviation | `[0 – 2·hover_force] - hover_force` |
+| Roll torque | ±2×10⁻³ Nm |
+| Pitch torque | ±2×10⁻³ Nm |
+| Yaw torque | ±1×10⁻³ Nm |
+
+---
+
+## Cost Tuning
+
+The cost matrices penalize deviations across the 12-state vector and 4 inputs:
+
+```python
+# State penalty (diagonal Q)
+Q_x = [2e-1, 2e-1, 5e3,    # position (x, y, z)
+       10,   10,   20,      # velocity (vx, vy, vz)
+       40e2, 40e2, 10e2,    # angles   (roll, pitch, yaw)
+       5,    5,    5]       # rates    (p, q, r)
+
+# Input penalty (diagonal R)
+R = [0.1, 0.1, 0.01, 0.1]  # [thrust, τ_roll, τ_pitch, τ_yaw]
+```
+
+Increase **Q** entries for tighter state tracking. Increase **R** entries for smoother control inputs. For integral tracking, the `Q_z` weights on the integrator states govern how aggressively steady-state error is corrected.
+
+---
+
+## Simulation Scripts
+
+| Script | Controller | Features |
+|---|---|---|
+| `UnCst_Batch_droneRefTrack.py` | Unconstrained Batch MPC | Integral tracking, time-varying reference |
+| `UnCst_Dy_KalmanRefTrack.py` | DP MPC + Kalman | Disturbance estimation, velocity tracking |
+| `CstMPC_simple.py` | Constrained Batch MPC | Manual augmented state, state+input bounds |
+| `CstMPC_Reftrack.py` | Constrained + Integral tracking | Physical bound conversion, QP per step |
+| `CstMPC_Kalman_Reftrack.py` | Constrained + Kalman + Offset-free | Full pipeline with measurement noise |
+
+All scripts run a 30-second simulation with a piecewise-constant reference that cycles through roll/pitch commands at 5-second intervals, and save plots to `images/`.
 
 ---
 
 ## Installation
 
 ```bash
-# Create and activate virtual environment
 python -m venv .venv
-source .venv/bin/activate   # macOS/Linux
-# .venv\Scripts\activate    # Windows
+source .venv/bin/activate
 
-# Install dependencies
-pip install -r requirements.txt
+pip install mujoco numpy scipy qpsolvers[osqp] matplotlib
 ```
 
 ---
 
-## Quick Start
+## Running
 
 ```bash
-# Run default simulation
-python scripts/run_simulation.py
+# Most complete controller (constrained + Kalman + offset-free)
+python CstMPC_Kalman_Reftrack.py
 
-# Tune MPC parameters
-python scripts/tune_mpc.py --config src/config/tuning.yaml
+# Constrained MPC with integral tracking
+python CstMPC_Reftrack.py
 
-# Evaluate saved run
-python scripts/evaluate.py --run-id <run_id>
+# Unconstrained baseline
+python UnCst_Batch_droneRefTrack.py
 ```
 
----
-
-## MPC Module (Detailed)
-
-### Core Components
-
-- **Controller**: Builds and solves the optimization problem each timestep.
-- **Cost Function**: Penalizes tracking error, control effort, and rate changes.
-- **Constraints**: Enforces physical/operational bounds.
-- **Model**: Predictive dynamics used by optimizer.
-
-### Typical MPC Formulation
-
-Minimize over control sequence:
-
-\[
-J = \sum_{k=0}^{N-1}
-\left\|x_k - x_k^{ref}\right\|_Q^2 +
-\left\|u_k - u_k^{ref}\right\|_R^2 +
-\left\|\Delta u_k\right\|_S^2
-\]
-
-Subject to:
-
-- \(x_{k+1} = f(x_k, u_k)\)
-- \(x_{min} \le x_k \le x_{max}\)
-- \(u_{min} \le u_k \le u_{max}\)
-
-### Tuning Guidance
-
-- Increase **Q** for tighter state tracking.
-- Increase **R** for smoother/smaller control actions.
-- Increase **S** to reduce actuator aggressiveness.
-- Increase horizon **N** for foresight (higher compute cost).
+Plots are saved to `images/` at the end of each run.
 
 ---
 
-## Configuration
+## Key Design Decisions
 
-Use YAML/JSON config files for:
-- Model parameters
-- Horizon length
-- Cost weights
-- Constraint limits
-- Solver settings
-
-Example:
-
-```yaml
-mpc:
-    horizon: 20
-    dt: 0.05
-    weights:
-        Q: [10, 10, 1]
-        R: [0.1]
-        S: [1.0]
-    constraints:
-        u_min: -1.0
-        u_max: 1.0
-```
-
----
-
-## Testing
-
-```bash
-pytest -q
-```
-
----
-
-## Outputs
-
-Simulation outputs are typically stored in:
-- `data/outputs/` for logs/results
-- figures under `plots/` or run-specific directories
-
-Include:
-- tracking error metrics
-- control input history
-- constraint violation checks
-
----
-
-## Roadmap
-
-- [ ] Nonlinear MPC support
-- [ ] Real-time benchmarking
-- [ ] Hardware-in-the-loop integration
-- [ ] Multi-objective tuning utilities
-
----
-
-## Contributing
-
-1. Create feature branch
-2. Add/update tests
-3. Run lint + tests
-4. Open pull request with summary
+- **Deviation inputs:** The MPC always optimizes `u_dev = u - u_hover`. Hover thrust is added back before passing to the simulator, keeping the linearization assumption valid.
+- **Constraint shifting:** When using offset-free MPC, state and input bounds are automatically shifted relative to the computed steady-state targets `(xₛ, uₛ)` so the QP is always solved in deviation coordinates.
+- **Kalman filter:** Solved offline via the discrete algebraic Riccati equation (DARE) for the augmented `[x; d]` system. Only the correction step runs online.
+- **Controllability/Observability:** Verified at startup for both the base 12-state system and the augmented integral/disturbance-extended systems.
 
 ---
 
 ## License
 
-Add your license here (e.g., MIT, Apache-2.0).
-
----
-
-## Maintainer
-
-Project owner: `@your-handle`
-```
-
-If you share this command output, a fully accurate README can be generated from your real files:
-
-```bash
-tree -a -L 4
-```
+Add your license here.

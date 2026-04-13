@@ -46,10 +46,10 @@ $$
 
 where:
 
-- \(x, y, z\) are position
-- \(v_x, v_y, v_z\) are linear velocities
-- \(\phi, \theta, \psi\) are roll, pitch, and yaw
-- \(p, q, r\) are body angular rates
+- $x, y, z$ are position
+- $v_x, v_y, v_z$ are linear velocities
+- $\phi, \theta, \psi$ are roll, pitch, and yaw
+- $p, q, r$ are body angular rates
 
 The control input is
 
@@ -62,8 +62,8 @@ $$
 
 where:
 
-- \(\Delta T\) is the deviation from hover thrust
-- \(\tau_\phi, \tau_\theta, \tau_\psi\) are roll, pitch, and yaw torques
+- $\Delta T$ is the deviation from hover thrust
+- $\tau_\phi, \tau_\theta, \tau_\psi$ are roll, pitch, and yaw torques
 
 ---
 
@@ -74,7 +74,7 @@ where:
 This controller precomputes the full receding-horizon feedback gain offline by solving the unconstrained finite-horizon quadratic program analytically:
 
 $$
-\min_U \; X^\top \bar{Q} X + U^\top \bar{R} U
+\min_U  X^\top \bar{Q} X + U^\top \bar{R} U
 \quad \text{subject to} \quad
 X = \Omega x_0 + \Gamma U
 $$
@@ -118,8 +118,8 @@ $$
 
 where:
 
-- \(\tilde{x} = x - x_{\text{ref}}\) is the tracking error state
-- \(z\) is the integral of the tracked output error
+- $\tilde{x} = x - x_{\text{ref}}$ is the tracking error state
+- $z$ is the integral of the tracked output error
 
 This allows the controller to track outputs such as \(z\), roll, pitch, or yaw with zero steady-state error while also penalizing integral windup through the cost function.
 
@@ -135,6 +135,12 @@ The repository also includes a Kalman-based offset-free version:
 
 - `DyPMPCKalmanReferenceTracking`
 
+Simulation of Drone folwwing a Square Path
+
+<p align="center">
+  <img src="images/DySim.gif" alt="Plot 2" width="45%">
+  <img src="images/UnCst_KalmanRefTrack_Dy.png" alt="Plot 1" width="45%">
+</p>
 ---
 
 ### 4. Constrained Batch MPC (`ConstrainedBatchMPC.py`)
@@ -178,7 +184,21 @@ This variant combines:
 - integral reference tracking
 - physical bound handling in error coordinates
 
-Because the optimization is performed in deviation variables, physical state bounds are automatically shifted relative to the current reference \(x_{\text{ref}}\), so that the constraints remain consistent in the tracking-error formulation.
+Because the optimization is performed in deviation variables, physical state bounds are automatically shifted relative to the current reference $x_{\text{ref}}$, so that the constraints remain consistent in the tracking-error formulation.   
+
+Here we can see the plots of input constraints **without and with input constraints**
+
+<p align="center">
+  <img src="images/drone_constrained_mpc_inputs_noic.png" alt="Plot 2" width="45%">
+  <img src="images/drone_constrained_mpc_inputs_wic.png" alt="Plot 1" width="45%">
+</p>
+
+As we can see below the perfromace of the controller is not much affected and the tracking is still satisfies the tracking and when the _**state constraint is applied on the pitch the controller obyed that along with not affecting the tracking of othere states**_
+<p align="center">
+  <img src="images/drone_constrained_mpc_reference_tracking_noic.png" alt="Plot 2" width="45%">
+  <img src="images/drone_constrained_mpc_reference_tracking_wic.png" alt="Plot 1" width="45%">
+</p>
+
 
 ---
 
@@ -205,166 +225,45 @@ $$
 
 At each timestep, the controller performs the following sequence:
 
-1. **Kalman correction**  
-   Update the estimate \(\begin{bmatrix}\hat{x} & \hat{d}\end{bmatrix}^\top\) using the latest measurement \(y_k\)
+1. **Kalman correction**  Update the estimate
+   
+$$
+\left[
+\begin{array}{c}
+\hat{x} \\
+\hat{d}
+\end{array}
+\right]
+$$
 
-2. **Steady-state target computation**  
-   Solve
+using the latest measurement $y_k$
 
-   $$
-   \begin{bmatrix}
-   A - I & B \\
-   H     & 0
-   \end{bmatrix}
-   \begin{bmatrix}
-   x_s \\
-   u_s
-   \end{bmatrix}
-   =
-   \begin{bmatrix}
-   -B_d \hat{d} \\
-   r
-   \end{bmatrix}
-   $$
+3. Solve Steady-state target to obtain the steady-state target $(x_s, u_s)$
 
-   to obtain the steady-state target \((x_s, u_s)\)
-
-3. **Constrained QP in deviation coordinates**  
+4. **Constrained QP in deviation coordinates**  
    Solve for
 
-   $$
-   \tilde{u} = u - u_s
-   $$
+$$
+\tilde{u} = u - u_s
+$$
 
    using deviation dynamics based on
 
-   $$
-   \tilde{x} = x - x_s
-   $$
+$$
+\tilde{x} = x - x_s
+$$
 
-4. **Apply control**
+5. **Apply control**
 
-   $$
-   u = u_s + \tilde{u}
-   $$
+$$
+u = u_s + \tilde{u}
+$$
 
-5. **Kalman prediction**  
+6. **Kalman prediction**  
    Propagate the estimator forward to the next timestep
 
 This structure gives robust tracking performance even in the presence of persistent disturbances such as wind or modeling error.
 
 ---
 
-## State and Input Constraints
 
-Constraints are assembled in condensed prediction form and stacked before each QP solve.
-
-| Constraint | Typical Values |
-|---|---|
-| Altitude \(z\) | \(0.10 \text{ m} \le z \le 0.45 \text{ m}\) |
-| Roll angle \(\phi\) | \(\pm 20^\circ\) |
-| Pitch angle \(\theta\) | \(\pm 20^\circ\) |
-| Thrust deviation \(\Delta T\) | \([0, 2T_{\text{hover}}] - T_{\text{hover}}\) |
-| Roll torque \(\tau_\phi\) | \(\pm 2 \times 10^{-3}\ \text{Nm}\) |
-| Pitch torque \(\tau_\theta\) | \(\pm 2 \times 10^{-3}\ \text{Nm}\) |
-| Yaw torque \(\tau_\psi\) | \(\pm 1 \times 10^{-3}\ \text{Nm}\) |
-
----
-
-## Cost Tuning
-
-The quadratic cost penalizes both state deviation and control effort.
-
-```python
-# State penalty (diagonal Q)
-Q_x = [2e-1, 2e-1, 5e3,    # position: x, y, z
-       10,   10,   20,     # velocity: vx, vy, vz
-       40e2, 40e2, 10e2,   # angles: roll, pitch, yaw
-       5,    5,    5]      # rates: p, q, r
-
-# Input penalty (diagonal R)
-R = [0.1, 0.1, 0.01, 0.1]  # [thrust, tau_roll, tau_pitch, tau_yaw]
-```
-
-In general:
-
-- increasing entries in \(Q\) enforces tighter state tracking
-- increasing entries in \(R\) produces smoother, less aggressive control inputs
-- for integral tracking, the \(Q_z\) weights determine how strongly steady-state error is corrected
-
----
-
-## Simulation Scripts
-
-| Script | Controller | Features |
-|---|---|---|
-| `UnCst_Batch_droneRefTrack.py` | Unconstrained Batch MPC | Integral tracking, time-varying reference |
-| `UnCst_Dy_KalmanRefTrack.py` | DP MPC + Kalman | Disturbance estimation, velocity tracking |
-| `CstMPC_simple.py` | Constrained Batch MPC | Manual augmented state, state and input bounds |
-| `CstMPC_Reftrack.py` | Constrained MPC + Integral tracking | Physical bound conversion, online QP solve |
-| `CstMPC_Kalman_Reftrack.py` | Constrained MPC + Kalman + Offset-free | Full pipeline with measurement noise |
-
-All scripts run a **30-second simulation** with a piecewise-constant reference that cycles through roll and pitch commands every **5 seconds**, and save plots to the `images/` directory.
-
----
-
-## Installation
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-
-pip install mujoco numpy scipy qpsolvers[osqp] matplotlib
-```
-
----
-
-## Running the Controllers
-
-```bash
-# Most complete controller: constrained + Kalman + offset-free
-python CstMPC_Kalman_Reftrack.py
-
-# Constrained MPC with integral tracking
-python CstMPC_Reftrack.py
-
-# Unconstrained baseline
-python UnCst_Batch_droneRefTrack.py
-```
-
-Simulation plots are saved to `images/` at the end of each run.
-
----
-
-## Key Design Decisions
-
-### Deviation Inputs
-The MPC optimizes deviation inputs
-
-$$
-u_{\text{dev}} = u - u_{\text{hover}}
-$$
-
-Hover thrust is added back before applying the command to the MuJoCo simulator.  
-This keeps the controller consistent with the hover linearization.
-
-### Constraint Shifting
-In the offset-free formulation, state and input bounds are automatically shifted relative to the computed steady-state targets \((x_s, u_s)\), so that the QP is solved entirely in deviation coordinates.
-
-### Kalman Filter Design
-The Kalman filter is obtained offline by solving the discrete algebraic Riccati equation (DARE) for the augmented disturbance-estimation model. Only the estimator recursion is executed online.
-
-### Controllability and Observability Checks
-The project verifies controllability and observability at startup for:
-
-- the base 12-state hover model
-- the integral-augmented tracking model
-- the disturbance-augmented offset-free model
-
-This helps ensure that each controller formulation is well-posed before simulation begins.
-
----
-
-## License
-
-Add your license here.
